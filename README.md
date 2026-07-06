@@ -11,11 +11,17 @@ forking the LIBERO runner.
 
 ## A100 quickstart
 
+From a fresh Lambda SSH session:
+
+```bash
+git clone https://github.com/thenukr/video-policy-test.git
+cd video-policy-test
+```
+
 Install the system packages required for headless MuJoCo rendering. The script
 selects the NVIDIA EGL library matching the installed driver:
 
 ```bash
-cd ~/video-policy-test
 ./scripts/setup_system.sh
 ```
 
@@ -23,7 +29,6 @@ Install the pinned MimicVideo source, its CUDA 12.6 environment, LIBERO, and one
 released checkpoint:
 
 ```bash
-cd ~/video-policy-test
 ./scripts/setup_lambda.sh --models object_full
 ```
 
@@ -105,6 +110,13 @@ ssh -L 8000:localhost:8000 ubuntu@YOUR_INSTANCE
 Then visit `http://localhost:8000`. The MP4 files can also be opened directly
 from a remote editor or notebook.
 
+## Reference run
+
+The repository includes the completed LIBERO-Object task 0 run under
+`results/libero_object/20260706T013340Z_object_full/`. It contains ten raw
+execution videos, ten predicted-vs-executed comparison videos, per-episode
+metrics, and a 70% success-rate summary.
+
 ## Notes
 
 - The integration is pinned to MimicVideo commit
@@ -118,7 +130,9 @@ from a remote editor or notebook.
   MuJoCo 3.x releases.
 - A single A100 runs episodes serially to avoid model duplication and GPU OOM.
 - LIBERO uses offscreen rendering; no desktop session is needed.
-- Checkpoints and generated results are intentionally not committed to Git.
+- Model checkpoints remain excluded from Git and are recreated by the setup
+  script. The small reference run above is committed; new results remain
+  ignored unless deliberately added.
 
 Run the lightweight unit tests with:
 
