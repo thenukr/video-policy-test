@@ -1,0 +1,88 @@
+diff --git a/model/pyproject.toml b/model/pyproject.toml
+index 2674b07..8ee7656 100644
+--- a/model/pyproject.toml
++++ b/model/pyproject.toml
+@@ -107,16 +107,6 @@ cu126 = [
+   "nvidia-nvtx-cu12==12.6.77; platform_machine == 'x86_64'",
+ ]
+ 
+-cu129 = [
+-  "nvidia-cudnn-cu12==9.10.2.21; platform_machine == 'x86_64'",
+-  "torch==2.8.0; platform_machine == 'x86_64'",
+-  "torchvision==0.23.0; platform_machine == 'x86_64'",
+-  "triton==3.4.0; platform_machine == 'x86_64'",
+-  "apex==0.1.0; platform_machine == 'x86_64'",
+-  "flash-attn==2.8.3+cu12torch2.8cxx11abiTRUE; platform_machine == 'x86_64'",
+-  "transformer-engine[pytorch]==1.13.0; platform_machine == 'x86_64'",
+-]
+-
+ [project.readme]
+ content-type = "text/markdown"
+ text = '''
+@@ -134,12 +124,10 @@ repository = "https://github.com/nvidia-cosmos/cosmos-predict2"
+ [tool.uv]
+ environments = [
+   "python_version == '3.10' and sys_platform == 'linux' and platform_machine == 'x86_64'",
+-  "python_version == '3.10' and sys_platform == 'linux' and platform_machine == 'aarch64'",
+ ]
+ 
+ required-environments = [
+   "python_version == '3.10' and sys_platform == 'linux' and platform_machine == 'x86_64'",
+-  "python_version == '3.10' and sys_platform == 'linux' and platform_machine == 'aarch64'",
+ ]
+ 
+ conflicts = [
+@@ -150,35 +138,11 @@ conflicts = [
+ ]
+ 
+ [tool.uv.sources]
+-apex = [
+-  { index = "cosmos-cu126", extra = "cu126", marker = "platform_machine == 'x86_64'" },
+-  { git = "https://github.com/NVIDIA/apex.git", extra = "cu126", marker = "platform_machine == 'aarch64'" },
+-  { git = "https://github.com/NVIDIA/apex.git", extra = "cu129", marker = "platform_machine == 'x86_64'" },
+-]
+-flash-attn = [
+-  { index = "cosmos-cu126", extra = "cu126", marker = "platform_machine == 'x86_64'" },
+-  { url = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3%2Bcu12torch2.8cxx11abiTRUE-cp310-cp310-linux_x86_64.whl", extra = "cu129", marker = "platform_machine == 'x86_64'" },
+-]
+-transformer-engine = [
+-  { index = "cosmos-cu126", extra = "cu126", marker = "platform_machine == 'x86_64'" },
+-  { git = "https://github.com/NVIDIA/TransformerEngine.git", tag = "v1.13", extra = "cu126", marker = "platform_machine == 'aarch64'" },
+-]
+-triton = [
+-  { git = "https://github.com/triton-lang/triton.git", tag = "v3.2.0", subdirectory = "python", extra = "cu126", marker = "platform_machine == 'aarch64'" }
+-]
+-torch = [
+-  { index = "cosmos-cu126", extra = "cu126", marker = "platform_machine == 'x86_64'" },
+-  { index = "pytorch-cu126", extra = "cu126", marker = "platform_machine == 'aarch64'" },
+-  { index = "pytorch-cu129", extra = "cu129", marker = "platform_machine == 'x86_64'" },
+-]
+-torchvision = [
+-  { index = "cosmos-cu126", extra = "cu126", marker = "platform_machine == 'x86_64'" },
+-  { index = "pytorch-cu126", extra = "cu126", marker = "platform_machine == 'aarch64'" },
+-  { index = "pytorch-cu129", extra = "cu129", marker = "platform_machine == 'x86_64'" },
+-]
+-nvidia-cudnn-cu12 = [
+-  { index = "pytorch-cu129", extra = "cu129", marker = "platform_machine == 'x86_64'" },
+-]
++apex = { index = "cosmos-cu126" }
++flash-attn = { index = "cosmos-cu126" }
++transformer-engine = { index = "cosmos-cu126" }
++torch = { index = "cosmos-cu126" }
++torchvision = { index = "cosmos-cu126" }
+ 
+ [[tool.uv.index]]
+ name = "cosmos-cu126"
+diff --git a/model/scripts/download_checkpoints.py b/model/scripts/download_checkpoints.py
+index dde70b8..2f34f6f 100755
+--- a/model/scripts/download_checkpoints.py
++++ b/model/scripts/download_checkpoints.py
+@@ -55,7 +55,7 @@ def get_checkpoints(policy_name: str) -> tuple[str, ...]:
+ 
+     return (
+         f"action_decoder/w2a_{policy_name}*",
+-        f"video_backbone/v2w_{policy_name.split('_')[:2]}*",
++        f"video_backbone/v2w_{'_'.join(policy_name.split('_')[:2])}*",
+         f"dataset_statistics/{policy_name}.json",
+     )
+ 
