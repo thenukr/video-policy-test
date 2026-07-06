@@ -39,6 +39,11 @@ def serve_gallery(results_dir: Path, host: str, port: int) -> None:
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(results_dir), **kwargs)
 
+        def do_GET(self) -> None:
+            if self.path in {"/", "/index.html"}:
+                build_gallery(results_dir)
+            super().do_GET()
+
     server = ThreadingHTTPServer((host, port), Handler)
     print(f"Serving {index} at http://{host}:{port}/ (Ctrl-C to stop)")
     try:
@@ -52,4 +57,3 @@ def serve_gallery(results_dir: Path, host: str, port: int) -> None:
 def read_summary(results_dir: Path) -> dict:
     path = results_dir / "summary.json"
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-
