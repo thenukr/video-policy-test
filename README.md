@@ -74,6 +74,18 @@ how many of MimicVideo's 35 video denoising steps run (default `0`, matching its
 fast one-forward-pass setting); `--execute-actions` controls action chunking
 (default `5`).
 
+To fully denoise the predicted future and record it beside the real execution
+for every action chunk:
+
+```bash
+.cache/mimic-video/model/.venv/bin/video-policy rollout \
+  --model object_full --tasks 0 --episodes 10 --record-predictions
+```
+
+Comparison videos are labeled `_comparison.mp4`. They align MimicVideo's 10 Hz
+prediction with LIBERO's 20 Hz execution and show the portion corresponding to
+each five-action chunk.
+
 MimicVideo released checkpoints for `libero_goal`, `libero_object`, and
 `libero_spatial`. Model and suite must match. List exact choices with
 `video-policy models`.

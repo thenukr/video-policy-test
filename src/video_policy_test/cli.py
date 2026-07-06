@@ -43,6 +43,7 @@ def _rollout(args: argparse.Namespace) -> None:
         stop_after_step=args.stop_after_step,
         execute_actions=args.execute_actions,
         artifact_dir=output,
+        record_predictions=args.record_predictions,
     )
     run_libero(
         policy=policy,
@@ -104,6 +105,11 @@ def _build_parser() -> argparse.ArgumentParser:
     rollout.add_argument("--settle-steps", type=int, default=10)
     rollout.add_argument("--stop-after-step", type=int, default=0)
     rollout.add_argument("--execute-actions", type=int, default=5)
+    rollout.add_argument(
+        "--record-predictions",
+        action="store_true",
+        help="fully denoise and record predicted-vs-real action chunks",
+    )
     rollout.add_argument("--seed", type=int, default=0)
     rollout.add_argument("--output", type=Path, default=Path("results"))
     rollout.set_defaults(func=_rollout)

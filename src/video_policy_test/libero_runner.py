@@ -31,6 +31,7 @@ class EpisodeResult:
     steps: int
     elapsed_seconds: float
     video: str
+    comparison_video: str | None
 
 
 def set_seed(seed: int) -> None:
@@ -60,6 +61,48 @@ def _write_video(frames: Iterable[np.ndarray], path: Path) -> None:
     with imageio.get_writer(path, fps=20) as writer:
         for frame in frames:
             writer.append_data(frame)
+
+
+def _write_comparison(
+    chunks: list[tuple[np.ndarray, list[np.ndarray]]],
+    path: Path,
+) -> None:
+    """Write temporally aligned predicted-vs-executed action chunks."""
+    import cv2
+    import imageio.v2 as imageio
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with imageio.get_writer(path, fps=20) as writer:
+        for chunk_index, (prediction, real_frames) in enumerate(chunks):
+            if len(prediction) == 0 or not real_frames:
+                continue
+            for real_index, real_frame in enumerate(real_frames):
+                # LIBERO executes at 20 Hz; MimicVideo predicts at 10 Hz.
+                prediction_index = min(real_index // 2, len(prediction) - 1)
+                predicted_frame = prediction[prediction_index]
+                canvas = np.concatenate((predicted_frame, real_frame), axis=1)
+                header = np.full((32, canvas.shape[1], 3), 18, dtype=np.uint8)
+                cv2.putText(
+                    header,
+                    f"FULLY DENOISED PREDICTION    chunk {chunk_index + 1}",
+                    (16, 23),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55,
+                    (235, 235, 235),
+                    2,
+                    cv2.LINE_AA,
+                )
+                cv2.putText(
+                    header,
+                    "REAL EXECUTION",
+                    (canvas.shape[1] // 2 + 16, 23),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55,
+                    (235, 235, 235),
+                    2,
+                    cv2.LINE_AA,
+                )
+                writer.append_data(np.concatenate((header, canvas), axis=0))
 
 
 def run_libero(
@@ -114,6 +157,9 @@ def run_libero(
                 observation = env.set_init_state(initial_states[episode % len(initial_states)])
                 policy.reset(description)
                 frames: list[np.ndarray] = []
+                comparison_chunks: list[tuple[np.ndarray, list[np.ndarray]]] = []
+                current_prediction: np.ndarray | None = None
+                current_real_frames: list[np.ndarray] = []
                 success = False
                 steps_taken = 0
 
@@ -128,6 +174,15 @@ def run_libero(
                         image = _agentview(observation)
                         frames.append(image)
                         action = policy.act(image, description, observation)
+                        pop_prediction = getattr(policy, "pop_prediction", None)
+                        prediction = pop_prediction() if pop_prediction is not None else None
+                        if prediction is not None:
+                            if current_prediction is not None:
+                                comparison_chunks.append((current_prediction, current_real_frames))
+                            current_prediction = prediction
+                            current_real_frames = []
+                        if current_prediction is not None:
+                            current_real_frames.append(image)
                         observation, _, done, _ = env.step(action.tolist())
                         steps_taken = step + 1
                         if done:
@@ -136,6 +191,15 @@ def run_libero(
 
                 video_path = output_dir / _video_name(task_id, episode, success)
                 _write_video(frames, video_path)
+                if current_prediction is not None:
+                    comparison_chunks.append((current_prediction, current_real_frames))
+                comparison_path = (
+                    video_path.with_name(video_path.stem + "_comparison.mp4")
+                    if comparison_chunks
+                    else None
+                )
+                if comparison_path is not None:
+                    _write_comparison(comparison_chunks, comparison_path)
                 result = EpisodeResult(
                     suite=suite_name,
                     task_id=task_id,
@@ -145,6 +209,7 @@ def run_libero(
                     steps=steps_taken,
                     elapsed_seconds=round(time.monotonic() - started, 3),
                     video=video_path.name,
+                    comparison_video=comparison_path.name if comparison_path else None,
                 )
                 results.append(result)
                 with result_path.open("a", encoding="utf-8") as handle:
@@ -165,4 +230,3 @@ def run_libero(
     }
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     return results
-

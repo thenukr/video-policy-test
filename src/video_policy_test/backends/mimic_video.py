@@ -102,6 +102,7 @@ class MimicVideoPolicy:
         stop_after_step: int = 0,
         execute_actions: int = 5,
         artifact_dir: Path,
+        record_predictions: bool = False,
     ) -> None:
         if not 0 <= stop_after_step <= 35:
             raise ValueError("stop_after_step must be between 0 and 35")
@@ -124,7 +125,47 @@ class MimicVideoPolicy:
             )
 
         upstream = _load_upstream_module(upstream_root)
-        self._policy: Any = upstream.VAMInference(
+        inference_class = upstream.VAMInference
+        if record_predictions:
+            import numpy as np
+            import torch
+
+            class RecordingVAMInference(upstream.VAMInference):
+                """Run full video denoising while retaining the action context."""
+
+                def _query_policy(self, task_description: str) -> None:
+                    images = np.concatenate(list(self._image_history)[::4], axis=1)
+                    lowdims = np.stack(list(self._lowdim_history), axis=0)
+                    input_vid = torch.from_numpy(images[None]).cuda().to(dtype=torch.bfloat16)
+                    state_tensor = torch.from_numpy(lowdims[None]).cuda().to(dtype=torch.bfloat16)
+
+                    with torch.no_grad():
+                        pred_actions, predicted_video = self.model(
+                            input_vid=input_vid,
+                            state_B_HO_O=state_tensor,
+                            prompt=task_description,
+                            num_sampling_step=self.num_sampling_steps,
+                            stop_after_step=self.stop_video_denoising_step,
+                            return_video=True,
+                            use_cuda_graphs=True,
+                        )
+
+                    self.action_buffer = pred_actions[0].float().cpu().numpy()
+                    self._execute_horizon = self.num_execute_actions
+                    self.action_buffer_idx = 0
+                    frames = (
+                        ((predicted_video[0].float().clamp(-1, 1) + 1) * 127.5)
+                        .to(torch.uint8)
+                        .permute(1, 2, 3, 0)
+                        .cpu()
+                        .numpy()
+                    )
+                    # The first five decoded frames are the observation history.
+                    self._latest_prediction = frames[5:]
+
+            inference_class = RecordingVAMInference
+
+        self._policy: Any = inference_class(
             config.experiment_name,
             str(paths["video model"]),
             str(paths["action model"]),
@@ -135,6 +176,7 @@ class MimicVideoPolicy:
             execute_actions,
             artifact_dir,
         )
+        self._latest_prediction = None
 
     def reset(self, task_description: str) -> None:
         self._policy.reset(task_description)
@@ -142,3 +184,7 @@ class MimicVideoPolicy:
     def act(self, image: Any, task_description: str, observation: dict[str, Any]) -> Any:
         return self._policy.step(image, task_description, observation)
 
+    def pop_prediction(self) -> Any | None:
+        prediction = getattr(self._policy, "_latest_prediction", None)
+        self._policy._latest_prediction = None
+        return prediction

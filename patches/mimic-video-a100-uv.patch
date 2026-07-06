@@ -5,7 +5,7 @@ index 2674b07..8ee7656 100644
 @@ -107,16 +107,6 @@ cu126 = [
    "nvidia-nvtx-cu12==12.6.77; platform_machine == 'x86_64'",
  ]
- 
+
 -cu129 = [
 -  "nvidia-cudnn-cu12==9.10.2.21; platform_machine == 'x86_64'",
 -  "torch==2.8.0; platform_machine == 'x86_64'",
@@ -25,16 +25,16 @@ index 2674b07..8ee7656 100644
    "python_version == '3.10' and sys_platform == 'linux' and platform_machine == 'x86_64'",
 -  "python_version == '3.10' and sys_platform == 'linux' and platform_machine == 'aarch64'",
  ]
- 
+
  required-environments = [
    "python_version == '3.10' and sys_platform == 'linux' and platform_machine == 'x86_64'",
 -  "python_version == '3.10' and sys_platform == 'linux' and platform_machine == 'aarch64'",
  ]
- 
+
  conflicts = [
 @@ -150,35 +138,11 @@ conflicts = [
  ]
- 
+
  [tool.uv.sources]
 -apex = [
 -  { index = "cosmos-cu126", extra = "cu126", marker = "platform_machine == 'x86_64'" },
@@ -70,7 +70,7 @@ index 2674b07..8ee7656 100644
 +transformer-engine = { index = "cosmos-cu126" }
 +torch = { index = "cosmos-cu126" }
 +torchvision = { index = "cosmos-cu126" }
- 
+
  [[tool.uv.index]]
  name = "cosmos-cu126"
 diff --git a/model/scripts/download_checkpoints.py b/model/scripts/download_checkpoints.py
@@ -78,11 +78,123 @@ index dde70b8..2f34f6f 100755
 --- a/model/scripts/download_checkpoints.py
 +++ b/model/scripts/download_checkpoints.py
 @@ -55,7 +55,7 @@ def get_checkpoints(policy_name: str) -> tuple[str, ...]:
- 
+
      return (
          f"action_decoder/w2a_{policy_name}*",
 -        f"video_backbone/v2w_{policy_name.split('_')[:2]}*",
 +        f"video_backbone/v2w_{'_'.join(policy_name.split('_')[:2])}*",
          f"dataset_statistics/{policy_name}.json",
      )
- 
+
+diff --git a/model/cosmos_predict2/pipelines/video2world.py b/model/cosmos_predict2/pipelines/video2world.py
+index b4f2f53..12b02ec 100644
+--- a/model/cosmos_predict2/pipelines/video2world.py
++++ b/model/cosmos_predict2/pipelines/video2world.py
+@@ -882,6 +882,7 @@ class Video2WorldPipeline(BasePipeline):
+         seed: int = 0,
+         use_cuda_graphs: bool = False,
+         return_context_at_step: int | None = None,
++        return_video_with_context_at_step: int | None = None,
+         return_all_context: bool = False,
+         hidden_state_layer_idx: int | None = None,
+         decode_video: bool = True,
+@@ -952,6 +953,7 @@ class Video2WorldPipeline(BasePipeline):
+         x0_prev: torch.Tensor | None = None
+
+         context = []
++        video_context = None
+         for i, _ in enumerate(tqdm(scheduler.timesteps, desc="Generating world", leave=False)):
+             # Current noise level (sigma_t).
+             sigma_t = scheduler.sigmas[i].to(sample.device, dtype=torch.float32)
+@@ -962,7 +964,7 @@ class Video2WorldPipeline(BasePipeline):
+
+             if return_all_context:
+                 return_only_hidden_states_up_to = float("inf")
+-            elif i == return_context_at_step:
++            elif i == return_context_at_step or i == return_video_with_context_at_step:
+                 return_only_hidden_states_up_to = hidden_state_layer_idx
+             else:
+                 return_only_hidden_states_up_to = None
+@@ -971,9 +973,17 @@ class Video2WorldPipeline(BasePipeline):
+             if return_only_hidden_states_up_to is not None:
+                 x0_pred, hidden_states = x0_pred
+
++            if i == return_video_with_context_at_step:
++                video_context = (hidden_states[hidden_state_layer_idx], sigma_in)
++                # Partial-forward mode intentionally returns only hidden states.
++                # Run this one denoising step normally as well so sampling can
++                # continue through the final decoded video.
++                if x0_pred is None:
++                    x0_pred = x0_fn(sample, sigma_in)
++
+             if i == return_context_at_step:
+                 return hidden_states[hidden_state_layer_idx], sigma_in
+
+             if return_all_context:
+                 context.append((sigma_in, hidden_states[hidden_state_layer_idx]))
+
+@@ -1008,9 +1018,15 @@ class Video2WorldPipeline(BasePipeline):
+             return hidden_states[hidden_state_layer_idx], sigma_min
+
+         # shape: (B, C, T, H, W), possibly out of [-1, 1]
+-        if decode_video:
+-            return self.decode(samples)
+-        return samples
++        video = self.decode(samples) if decode_video else samples
++        if return_video_with_context_at_step is not None:
++            if video_context is None:
++                raise ValueError(
++                    f"Context step {return_video_with_context_at_step} was not reached "
++                    f"during {num_sampling_step} denoising steps."
++                )
++            return video, *video_context
++        return video
+
+     @torch.no_grad()
+     def __call__(
+diff --git a/model/cosmos_predict2/pipelines/video2world2action.py b/model/cosmos_predict2/pipelines/video2world2action.py
+index 0045982..301f627 100644
+--- a/model/cosmos_predict2/pipelines/video2world2action.py
++++ b/model/cosmos_predict2/pipelines/video2world2action.py
+@@ -32,6 +32,7 @@ class Video2World2ActionPipeline(nn.Module):
+         prompt_embedding: torch.Tensor | None = None,
+         num_sampling_step: int = 35,
+         stop_after_step: int | None = None,
++        return_video: bool = False,
+         seed: int = 0,
+         use_cuda_graphs: bool = False,
+     ) -> torch.Tensor:
+@@ -45,7 +46,7 @@ class Video2World2ActionPipeline(nn.Module):
+         T = input_vid.shape[2]
+         assert T in {1, 5}
+
+-        crossattn_emb, video_sigma = self.video2world_pipeline.generate_video(
++        video_result = self.video2world_pipeline.generate_video(
+             vid_input=input_vid,
+             is_video_embedding=False,
+             num_latent_conditional_frames=1 if T == 1 else 2,
+@@ -56,16 +57,22 @@ class Video2World2ActionPipeline(nn.Module):
+             num_sampling_step=num_sampling_step,
+             seed=seed,
+             use_cuda_graphs=use_cuda_graphs,
+-            return_context_at_step=stop_after_step,
++            return_context_at_step=None if return_video else stop_after_step,
++            return_video_with_context_at_step=stop_after_step if return_video else None,
+             hidden_state_layer_idx=self.world2action_pipeline.config.xattn_layer_idx,
+         )
++        if return_video:
++            generated_video, crossattn_emb, video_sigma = video_result
++        else:
++            crossattn_emb, video_sigma = video_result
+         hidden_state_shape = crossattn_emb.shape
+         crossattn_emb = crossattn_emb.reshape(hidden_state_shape[0], -1, hidden_state_shape[-1])
+
+-        return self.world2action_pipeline(
++        actions = self.world2action_pipeline(
+             state_B_HO_O=state_B_HO_O,
+             crossattn_emb=crossattn_emb,
+             context_timesteps_B_1=video_sigma.unsqueeze(1),
+             seed=seed,
+             use_cuda_graphs=use_cuda_graphs,
+         )
++        return (actions, generated_video) if return_video else actions
